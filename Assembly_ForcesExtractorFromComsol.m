@@ -1,0 +1,200 @@
+clear;
+clc;
+
+
+%% For Ubuntu
+% Write in Terminal:   /home/Comsol/Comsol/comsol64/multiphysics/bin/comsol mphserver
+addpath('/home/Comsol/Comsol/comsol64/multiphysics/mli')
+rehash
+which mphstart
+mphstart(2036)
+mphversion
+disp('LiveLink is ready')
+%% Cargar el modelo y comprobar que se ha incluido el calculo ForceCalculation
+
+
+import com.comsol.model.*
+import com.comsol.model.util.*
+disp('LiveLink is ready')
+
+model = mphload('Z:\Projects\Magnets\Simulations\Kepler\Assembly\Kepler_nonlinear_50mT_237ppm_zigzag_Assembly.mph');
+%model = mphload('C:\Users\RF_user\Desktop\Preclínico\Preclinico_142mT_mfnc_sm_.mph');
+
+Fx = mphglobal(model,'comp1.mfnc.Forcex_32');
+
+% alphaData = importdata('C:\Users\Lucas\Documents\MATLAB\anillo7.txt');
+%% Cargar el archivo .txt para obtener vectores de magnetizacion y  tamaño del cubo asociados en el .txt final
+
+% IMPORTANT: Verify and update the file path if necessary
+alphaData = importdata('Z:\Projects\Kepler\Halbach\50mT_237ppm_zigzag_HalfCubeAlternated\fullbody_50mT_237ppmsFlat_434Linear_zigzag.txt');
+
+%alphaData = importdata('C:\Users\RF_user\Desktop\Preclínico\preclinico_1layer_142mT_74ppms.txt');
+
+
+% File: cubeCenterPosX | cubeCenterPosY | cubeCenterPosZ | Br |normalisedMagnX | normalisedMagnY | normalisedMagnZ | cubeSizeX | cubeSizeY | cubeSizeZ
+cubeCenterPos(:,1) = alphaData(:,1);
+cubeCenterPos(:,2) = alphaData(:,2);
+cubeCenterPos(:,3) = alphaData(:,3);
+
+Br_all      = alphaData(:,4);
+MagDir_all  = alphaData(:,5:7);
+CubeSize_all = alphaData(:,8:10);
+
+%% Extraer numero total de imanes (esto se puede saltar si ya se sabe el numero de imanes. )
+
+geom = model.component('comp1').geom('geom1');
+
+% Lista de todas las features de la geometría
+
+featTags = string(geom.feature().tags);
+
+% Quedarnos solo con las que empiezan por 'blk'. Cuenta el numero de bloques, si para universo se ha incluido geometria de bloque en vez de esfera/cilindro, tenerlo en cuenta
+blkTags = featTags(startsWith(featTags,'blk'));
+
+Nmagnets = numel(blkTags);
+
+disp(['Numero total de bloques: ' num2str(Nmagnets)]);
+%% To see which is the solution activated
+disp('---- DATASETS DISPONIBLES ----')
+d = cell(model.result().dataset().tags);
+for i = 1:numel(d)
+    sol = char(model.result().dataset(d{i}).getString('solution'));
+    fprintf('[%d] %s  |  %s  |  sol: %s\n', ...
+        i, d{i}, char(model.result().dataset(d{i}).label), sol);
+end
+
+
+ 
+%% In case that there are more than one solutions, select the dataset of interest. If there is only one: dset1. This must be checked in the Comsol file.
+
+datasetTag= 'dset1'
+% Good practice: Display a force with known value to verify that the
+% selected dataset is the correct one
+Fx = mphglobal(model,'comp1.mfnc.Forcex_12', 'dataset', datasetTag);
+disp(Fx);
+
+fileID = fopen(['Z:\Projects\PhysioII - NextMRI\Magnet\Fuerzas_Next_Nosym_Linear.txt'],'w');
+
+fprintf(fileID, 'Magnet number\t');
+fprintf(fileID, 'Fx\tFy\tFz\t');
+fprintf(fileID, 'Tx\tTy\tTz\t');
+fprintf(fileID, 'PosX\tPosY\tPosZ\t');
+fprintf(fileID, 'Br\t');
+fprintf(fileID, 'Mx\tMy\tMz\t');
+fprintf(fileID, 'SizeX\tSizeY\tSizeZ\n');
+
+
+idxBlkstart = 10;
+
+for idx = 1 : Nmagnets
+
+    idxBlk = idx+ idxBlkstart;
+    cubeFeature = model.component('comp1').geom('geom1').feature(['blk' num2str(idxBlk)]);
+    position = cubeFeature.getString('pos');
+    Lpos = str2num(position);
+
+    Fx = mphglobal(model, ['comp1.mfnc.Forcex_' num2str(idxBlk)], 'dataset', datasetTag);
+    Fy = mphglobal(model, ['comp1.mfnc.Forcey_' num2str(idxBlk)], 'dataset', datasetTag);
+    Fz = mphglobal(model, ['comp1.mfnc.Forcez_' num2str(idxBlk)], 'dataset', datasetTag);
+
+    Tx = mphglobal(model, ['comp1.mfnc.Tx_'     num2str(idxBlk)], 'dataset', datasetTag);
+    Ty = mphglobal(model, ['comp1.mfnc.Ty_'     num2str(idxBlk)], 'dataset', datasetTag);
+    Tz = mphglobal(model, ['comp1.mfnc.Tz_'     num2str(idxBlk)], 'dataset', datasetTag);
+
+    posX = Lpos(1);
+    posY = Lpos(2);
+    posZ = Lpos(3);
+
+    Br   = Br_all(idx);
+
+    Mx0  = MagDir_all(idx,1);
+    My0  = MagDir_all(idx,2);
+    Mz0  = MagDir_all(idx,3);
+
+    SizeX = CubeSize_all(idx,1);
+    SizeY = CubeSize_all(idx,2);
+    SizeZ = CubeSize_all(idx,3);
+
+    fprintf(fileID, ...
+    '%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%g\t%g\t%g\t%g\t%g\t%g\t%g\n', ...
+    idxBlk, ...
+    Fx, Fy, Fz, ...
+    Tx, Ty, Tz, ...
+    posX, posY, posZ, ...
+    Br, ...
+    Mx0, My0, Mz0, ...
+    SizeX, SizeY, SizeZ);
+
+end
+
+fclose(fileID);
+
+%%
+%fileID = fopen('Forces_Preclinico_142mT_Linear_N45UH.txt', 'w');
+fileID = fopen('C:\Users\RF_user\Desktop\Lorena Vega\Next\Forces_Preclinico_142mT_Linear_N45UH_meshtetra_2.txt','w');
+
+fprintf(fileID, 'Magnet number\t');
+fprintf(fileID, 'Fx\t');
+fprintf(fileID, 'Fy\t');
+fprintf(fileID, 'Fz\t');
+fprintf(fileID, 'Tx\t');
+fprintf(fileID, 'Ty\t');
+fprintf(fileID, 'Tz\t');
+fprintf(fileID, 'PosX\t');
+fprintf(fileID, 'PosY\t');
+fprintf(fileID, 'PosZ\n');
+
+idxBlkstart = 10;
+
+for idx = 1 : Nmagnets
+    idxBlk = idx+ idxBlkstart;
+    cubeFeature = model.component('comp1').geom('geom1').feature(['blk' num2str(idxBlk)]);
+    position = cubeFeature.getString('pos');
+    Lpos = str2num(position);
+    Fx = mphglobal(model, ['comp1.mfnc.Forcex_' num2str(idxBlk)]);
+    Fy = mphglobal(model, ['comp1.mfnc.Forcey_' num2str(idxBlk)]);
+    Fz = mphglobal(model, ['comp1.mfnc.Forcez_' num2str(idxBlk)]);
+    Tx = mphglobal(model, ['comp1.mfnc.Tx_' num2str(idxBlk)]);
+    Ty = mphglobal(model, ['comp1.mfnc.Ty_' num2str(idxBlk)]);
+    Tz = mphglobal(model, ['comp1.mfnc.Tz_' num2str(idxBlk)]);
+    posX = Lpos(1);
+    posY = Lpos(2);
+    posZ = Lpos(3);
+    fprintf(fileID, '%d\t', idxBlk);
+    fprintf(fileID, '%d\t', Fx);
+    fprintf(fileID, '%d\t', Fy);
+    fprintf(fileID, '%d\t', Fz);
+    fprintf(fileID, '%d\t', Tx);
+    fprintf(fileID, '%d\t', Ty);
+    fprintf(fileID, '%d\t', Tz);
+    fprintf(fileID, '%d\t', posX);
+    fprintf(fileID, '%d\t', posY);
+    fprintf(fileID, '%d\n', posZ);
+    %disp(mphglobal(model, ['comp1.mfnc.Tz_' num2str(idxBlk)]));
+end
+
+fclose(fileID);
+
+%% Plot forces
+Fx_all  = zeros(Nmagnets,1);
+Fy_all  = zeros(Nmagnets,1);
+Fz_all  = zeros(Nmagnets,1);
+
+x_all   = zeros(Nmagnets,1);
+z_all   = zeros(Nmagnets,1);
+
+Fx_all(idx) = Fx;
+Fy_all(idx) = Fy;
+Fz_all(idx) = Fz;
+
+x_all(idx)  = posX;
+z_all(idx)  = posZ;
+
+figure
+scatter(x_all, z_all, 40, Fx_all, 'filled')
+axis equal
+xlabel('x [m]')
+ylabel('z [m]')
+title('Fx per magnet')
+colorbar
+grid on
